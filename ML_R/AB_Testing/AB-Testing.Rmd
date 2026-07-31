@@ -1,0 +1,449 @@
+---
+title: "Εργασία 10"
+author: "Κουιμτζίδου Δανάη"
+date: "2026-05-14"
+output: html_document
+---
+# ============================================================
+#  ΕΡΓΑΣΙΑ 010 — A/B Testing & Causal Inference
+#  Dataset: Marketing A/B Testing (Kaggle)
+#  Στόχος: Αξιολόγηση αποτελεσματικότητας διαφημιστικής καμπάνιας
+# ============================================================
+
+<br>
+
+```{r}
+# --- Εγκατάσταση & Φόρτωση πακέτων ---
+
+library(tidyverse)
+library(pwr)
+library(broom)
+library(scales)
+library(janitor)
+
+set.seed(42)
+
+# --- Φόρτωση δεδομένων ---
+ads <- read_csv("marketing_AB.csv") |>
+  janitor::clean_names() |>
+  mutate(
+    group     = factor(test_group, levels = c("psa", "ad")),
+    converted = as.integer(converted)
+  )
+
+glimpse(ads)
+```
+
+
+
+<br>
+
+```{r}
+# ============================================================
+#  ΜΕΡΟΣ Α — Simulated A/B Test
+# ============================================================
+
+# --- Παράμετροι πειράματος ---
+n_control   <- 8000      # μέγεθος ομάδας ελέγχου
+n_treatment <- 8000      # μέγεθος πειραματικής ομάδας
+p_control   <- 0.08      # baseline conversion rate
+p_treatment <- 0.10      # μετά την αλλαγή (true effect = +2%)
+
+
+# Προσομοίωση δεδομένων
+experiment <- tibble(
+  user_id = 1:(n_control + n_treatment),
+  group   = c(rep("control", n_control),
+              rep("treatment", n_treatment)),
+  converted = c(rbinom(n_control,   1, p_control),
+              rbinom(n_treatment, 1, p_treatment))
+)
+
+glimpse(experiment)
+
+```
+<br>
+
+```{r}
+# Συνοπτική περιγραφή με dplyr
+
+summary_stats <- experiment |>
+  group_by(group) |>
+  summarise(
+    n         = n(),
+    conversions = sum(converted),
+    conversion_rate = mean(converted),
+    se        = sqrt(conversion_rate * (1 - conversion_rate) / n),
+    ci_lower  = conversion_rate - 1.96 * se,
+    ci_upper  = conversion_rate + 1.96 * se
+  )
+
+summary_stats
+```
+
+Το tibble summary_stats περιλαμβάνει συνοπτικά στατιστικά στοιχεία για κάθε ομάδα του A/B test (control και treatment).
+
+Η μεταβλητή n δείχνει το συνολικό πλήθος χρηστών σε κάθε ομάδα. Στο παράδειγμα υπάρχουν 8000 χρήστες τόσο στο control όσο και στο treatment group.
+
+Η μεταβλητή conversions δείχνει πόσοι χρήστες πραγματοποίησαν conversion, δηλαδή έκαναν την επιθυμητή ενέργεια. Το control group είχε 677 conversions, ενώ το treatment group είχε 764 conversions.
+
+Η μεταβλητή conversion_rate εκφράζει το ποσοστό conversions ανά ομάδα και υπολογίζεται ως:
+
+conversion_rate = conversions / n
+
+Το control group παρουσίασε conversion rate 8.46%, ενώ το treatment group 9.55%, γεγονός που υποδηλώνει πιθανή θετική επίδραση της νέας διαφήμισης.
+
+Η μεταβλητή se (standard error) μετρά τη στατιστική αβεβαιότητα της εκτίμησης του conversion rate. Όσο μικρότερο είναι το standard error, τόσο πιο αξιόπιστη θεωρείται η εκτίμηση του ποσοστού conversion.
+
+Οι μεταβλητές ci_lower και ci_upper αντιστοιχούν στα κάτω και άνω όρια του 95% confidence interval. Το confidence interval δείχνει το εύρος τιμών μέσα στο οποίο αναμένεται να βρίσκεται το πραγματικό conversion rate του πληθυσμού με 95% εμπιστοσύνη.
+
+Για το control group το 95% confidence interval είναι περίπου: [7.85%, 9.07%]
+
+ενώ για το treatment group είναι: [8.91%, 10.19%]
+
+Τα αποτελέσματα δείχνουν ότι το treatment group εμφανίζει υψηλότερο conversion rate σε σχέση με το control group, γεγονός που υποδηλώνει ότι η νέα διαφημιστική καμπάνια μπορεί να βελτιώνει τις μετατροπές.
+
+<br>
+
+```{r}
+# Οπτικοποίηση με ggplot2 
+
+ggplot(summary_stats, aes(x = group, y = conversion_rate, fill = group)) +
+  geom_col(width = 0.5, alpha = 0.85) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper),
+                width = 0.15, linewidth = 0.8) +
+  geom_text(aes(label = percent(conversion_rate, accuracy = 0.1)),
+            vjust = -1.5, size = 5, fontface = "bold") +
+  scale_y_continuous(labels = percent, limits = c(0, 0.16)) +
+  scale_fill_manual(values = c("control" = "#6b7280",
+                                "treatment" = "#3b82f6")) +
+  labs(
+    title    = "A/B Test: Πιθανότητα κλικ ανά ομάδα",
+    subtitle = "Με 95% διαστήματα εμπιστοσύνης",
+    x = NULL, y = "Click-through probability"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none")
+```
+
+Το παραπάνω διάγραμμα παρουσιάζει το conversion rate για τις δύο ομάδες του A/B test: το control group και το treatment group. Οι μπάρες απεικονίζουν το ποσοστό χρηστών που πραγματοποίησαν conversion σε κάθε ομάδα, ενώ οι κάθετες γραμμές (error bars) αντιστοιχούν στα 95% confidence intervals.
+
+Παρατηρούμε ότι το treatment group εμφανίζει υψηλότερο conversion rate (9.6%) σε σύγκριση με το control group (8.5%). Αυτό υποδηλώνει ότι οι χρήστες που εκτέθηκαν στη νέα διαφημιστική καμπάνια πραγματοποίησαν conversions συχνότερα από εκείνους που ανήκαν στην ομάδα ελέγχου.
+
+Τα confidence intervals δείχνουν την αβεβαιότητα γύρω από τις εκτιμήσεις των conversion rates. Παρότι υπάρχει μικρή επικάλυψη μεταξύ των διαστημάτων εμπιστοσύνης, το treatment group εξακολουθεί να παρουσιάζει καλύτερη απόδοση συνολικά.
+
+Συνεπώς, το γράφημα παρέχει οπτική ένδειξη ότι η νέα διαφήμιση πιθανόν έχει θετική επίδραση στις μετατροπές. 
+
+<br>
+
+```{r}
+# Έλεγχος υποθέσεων με prop.test()
+
+conversions <- c(
+  summary_stats$conversions[1],
+  summary_stats$conversions[2]
+)
+
+visitors <- c(
+  summary_stats$n[1],
+  summary_stats$n[2]
+)
+
+test_result <- prop.test(
+  x          = conversions,
+  n          = visitors,
+  conf.level = 0.95,
+  correct    = FALSE
+)
+
+test_result
+```
+Το αποτέλεσμα του prop.test() δείχνει ότι υπάρχει στατιστικά σημαντική διαφορά μεταξύ των conversion rates των δύο ομάδων.
+
+Συγκεκριμένα, το control group παρουσίασε conversion rate ίσο με 8.46%, ενώ το treatment group παρουσίασε υψηλότερο conversion rate ίσο με 9.55%.
+
+Το p-value του ελέγχου είναι:
+
+p-value = 0.01628
+
+Επειδή:
+
+0.01628 < 0.05
+
+απορρίπτουμε τη μηδενική υπόθεση (H₀) ότι τα δύο conversion rates είναι ίσα.
+
+Αυτό σημαίνει ότι η διαφορά που παρατηρείται μεταξύ control και treatment group είναι στατιστικά σημαντική και δύσκολα οφείλεται σε τυχαία διακύμανση.
+
+Το 95% confidence interval της διαφοράς των proportions είναι:
+
+[-0.0197, -0.0020]
+
+και τα 2 άκρα αρνητικά, γεγονός που ενισχύει το συμπέρασμα ότι υπάρχει πραγματική διαφορά μεταξύ των δύο ομάδων.
+
+Συνεπώς, υπάρχουν ενδείξεις ότι η νέα διαφημιστική καμπάνια (treatment) αυξάνει τα conversions σε σχέση με το control.
+
+<br>
+
+```{r}
+# Χειρωνακτική επαλήθευση 
+
+p_pool <- sum(conversions) /
+          sum(visitors)
+
+
+# 2. Pooled standard error
+se_pool <- sqrt(p_pool * (1 - p_pool) *
+                  (1/visitors[1] + 1/visitors[2]))
+
+# 3. Διαφορά και διάστημα εμπιστοσύνης
+delta <- summary_stats$conversion_rate[2] - summary_stats$conversion_rate[1]
+m      <- 1.96 * se_pool
+
+cat(sprintf("Pooled p̂ = %.4f\n", p_pool))
+cat(sprintf("Pooled SE = %.4f\n", se_pool))
+cat(sprintf("δ = %.4f\n", delta))
+cat(sprintf("95%% CI for δ: [%.4f, %.4f]\n", delta - m, delta + m))
+
+# Επιχειρηματική απόφαση
+delta_min <- 0.01   # κατώφλι επιχειρηματικής ουσίας
+
+if (delta - m > delta_min) {
+  cat("ΣΥΜΠΕΡΑΣΜΑ: Υλοποιήστε την αλλαγή!\n")
+} else {
+  cat(" ΣΥΜΠΕΡΑΣΜΑ: Στατιστικά σημαντικό αλλά χωρίς επιχειρηματική ουσία.\n")
+}
+```
+<br>
+
+```{r}
+# Power Analysis
+
+effect_size <- ES.h(p1 = 0.10, p2 = 0.08)
+cat(sprintf("Cohen's h = %.4f\n", effect_size))
+
+# Υπολογισμός απαιτούμενου μεγέθους δείγματος ανά ομάδα
+sample_size_calc <- pwr.2p.test(
+  h           = effect_size,
+  sig.level   = 0.05,
+  power       = 0.80,
+  alternative = "two.sided"
+)
+
+sample_size_calc
+```
+Η ανάλυση ισχύος (power analysis) έδειξε ότι απαιτούνται περίπου 3205 παρατηρήσεις ανά ομάδα ώστε να μπορεί το A/B test να ανιχνεύσει διαφορά μεταξύ conversion rates 10% και 8%, με επίπεδο σημαντικότητας 5% και power 80%.
+
+Το διαθέσιμο dataset περιλαμβάνει 8000 χρήστες ανά ομάδα, αριθμός σημαντικά μεγαλύτερος από το απαιτούμενο μέγεθος δείγματος. Συνεπώς, το experiment διαθέτει επαρκή στατιστική ισχύ για την ανίχνευση ακόμη και μικρών διαφορών στα conversion rates.
+
+<br>
+
+Θέμα 6 — Πείραμα στη θέση «πύλης» σε mobile παιχνίδι ============================================================
+#  ΜΕΡΟΣ Β — Real-World A/B Analysis
+# ============================================================
+
+```{r}
+# Αναλογία στις ομάδες
+
+ads |>
+  count(group) |>
+  mutate(pct = n / sum(n))
+```
+
+Η κατανομή των χρηστών μεταξύ των ομάδων δεν είναι ισομερής. Συγκεκριμένα, περίπου το 96% των χρηστών ανήκει στην ομάδα ad, ενώ μόνο το 4% στην ομάδα psa.
+
+Επομένως, το experiment δεν ακολουθεί αναλογία 50/50. 
+
+<br>
+
+```{r}
+#  Κατανομή ανά ημέρα εβδομάδας 
+ads |>
+  count(group, most_ads_day) |>
+  group_by(group) |>
+  mutate(pct = n / sum(n)) |>
+  ggplot(aes(x = most_ads_day, y = pct, fill = group)) +
+  geom_col(position = "dodge") +
+  scale_y_continuous(labels = percent) +
+  labs(title = "Invariant check: κατανομή ανά ημέρα",
+       x = NULL, y = "% της ομάδας") +
+  theme_minimal()
+```
+
+Το παραπάνω διάγραμμα παρουσιάζει την κατανομή των χρηστών ανά ημέρα εβδομάδας για τις ομάδες psa και ad.
+
+Παρατηρούμε ότι οι δύο ομάδες εμφανίζουν σχετικά παρόμοια κατανομή στις περισσότερες ημέρες, χωρίς ακραίες αποκλίσεις. Αυτό αποτελεί ένδειξη ότι η διαδικασία τυχαιοποίσης λειτούργησε ικανοποιητικά ως προς τη χρονική κατανομή των χρηστών.
+
+Υπάρχουν μικρές διαφοροποιήσεις σε ορισμένες ημέρες, όπως το Σάββατο και την Πέμπτη, ωστόσο οι αποκλίσεις δεν φαίνονται ιδιαίτερα μεγάλες ώστε να υποδηλώνουν σοβαρό πρόβλημα στην τυχαιοποίηση.
+
+Συνεπώς, δεν εντοπίζονται εμφανείς ανισορροπίες μεταξύ των ομάδων ως προς την ημέρα προβολής των διαφημίσεων.
+
+<br>
+
+```{r}
+# Ανάλυση αποτελέσματος με tidyverse
+
+ads_summary <- ads |>
+  group_by(group) |>
+  summarise(
+    n              = n(),
+    conversions    = sum(converted),
+    conversion_rate = mean(converted),
+    se             = sqrt(conversion_rate * (1 - conversion_rate) / n)
+  ) |>
+  mutate(
+    ci_lower = conversion_rate - 1.96 * se,
+    ci_upper = conversion_rate + 1.96 * se
+  )
+
+ads_summary
+
+test <- prop.test(
+  x = ads_summary$conversions,
+  n = ads_summary$n,
+  correct = FALSE
+)
+
+# tidy output — πολύ καλύτερο από το σκέτο print()
+broom::tidy(test) |>
+  select(estimate1, estimate2, statistic, p.value,
+         conf.low, conf.high)
+```
+
+Το πραγματικό dataset δείχνει ότι η ομάδα ad παρουσίασε υψηλότερο conversion rate σε σχέση με την ομάδα psa.
+
+Συγκεκριμένα:
+
+η ομάδα psa είχε conversion rate περίπου 1.79%
+η ομάδα ad είχε conversion rate περίπου 2.55%
+
+Αυτό σημαίνει ότι οι χρήστες που είδαν την πραγματική διαφήμιση πραγματοποίησαν conversions συχνότερα από εκείνους που είδαν PSA (public service announcement).
+
+Τα 95% confidence intervals είναι:
+
+PSA: περίπου [1.62%, 1.95%]
+AD: περίπου [2.51%, 2.60%]
+
+Τα διαστήματα εμπιστοσύνης δεν επικαλύπτονται, γεγονός που αποτελεί ισχυρή ένδειξη ότι υπάρχει πραγματική διαφορά μεταξύ των δύο ομάδων.
+
+Επιπλέον, ο έλεγχος υποθέσεων με prop.test() έδωσε εξαιρετικά μικρό p-value, γεγονός που δείχνει ότι η διαφορά μεταξύ των δύο ομάδων είναι στατιστικά σημαντική και δύσκολα οφείλεται σε τυχαία διακύμανση.
+
+Το 95% confidence interval της διαφοράς των proportions δεν περιλαμβάνει το 0, κάτι που ενισχύει ακόμη περισσότερο το συμπέρασμα ότι η πραγματική διαφήμιση έχει θετική επίδραση στα conversions.
+
+Συνεπώς, τα αποτελέσματα του πραγματικού A/B test υποδηλώνουν ότι η διαφημιστική καμπάνια ad αποδίδει καλύτερα από την psa και οδηγεί σε υψηλότερο ποσοστό conversions.
+
+<br>
+
+```{r}
+# Conversion rate ανά ημέρα και ομάδα
+ads_by_day <- ads |>
+  group_by(most_ads_day, group) |>
+  summarise(
+    n = n(),
+    conversion_rate = mean(converted),
+    se = sqrt(conversion_rate * (1 - conversion_rate) / n),
+    .groups = "drop"
+  )
+
+ggplot(ads_by_day, aes(x = most_ads_day,
+                        y = conversion_rate,
+                        color = group, group = group)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  geom_ribbon(aes(ymin = conversion_rate - 1.96 * se,
+                  ymax = conversion_rate + 1.96 * se,
+                  fill = group),
+              alpha = 0.15, color = NA) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.1)) +
+  scale_color_manual(values = c("psa" = "#6b7280", "ad" = "#3b82f6")) +
+  scale_fill_manual(values = c("psa" = "#6b7280", "ad" = "#3b82f6")) +
+  labs(title = "Conversion rate ανά ημέρα εβδομάδας",
+       subtitle = "Με 95% διαστήματα εμπιστοσύνης",
+       x = NULL, y = "Conversion rate") +
+  theme_minimal(base_size = 13)
+```
+
+Η ημέρα με τη μεγαλύτερη διαφορά μεταξύ των δύο ομάδων φαίνεται να είναι η Τρίτη (και πολύ κοντά επίσης η Δευτέρα).
+
+Την Τρίτη, το conversion rate της ομάδας ad είναι σημαντικά υψηλότερο από εκείνο της ομάδας psa, γεγονός που υποδηλώνει ότι η διαφημιστική καμπάνια είναι ιδιαίτερα αποτελεσματική τη συγκεκριμένη ημέρα.
+Το παραπάνω διάγραμμα παρουσιάζει το conversion rate ανά ημέρα εβδομάδας για τις δύο ομάδες του experiment (ad και psa), μαζί με τα 95% confidence intervals.
+
+Παρατηρούμε ότι η ομάδα ad εμφανίζει υψηλότερο conversion rate σχεδόν σε όλες τις ημέρες της εβδομάδας σε σύγκριση με την ομάδα psa. Αυτό υποδηλώνει ότι η πραγματική διαφήμιση οδηγεί συστηματικά σε περισσότερα conversions.
+
+Η μεγαλύτερη διαφορά μεταξύ των δύο ομάδων φαίνεται κυρίως τη Δευτέρα και την Τρίτη, όπου το ad group παρουσιάζει αισθητά υψηλότερα conversion rates. Αντίθετα, το Σάββατο οι δύο ομάδες εμφανίζουν πιο παρόμοια απόδοση.
+
+Οι σκιασμένες περιοχές γύρω από τις γραμμές αντιστοιχούν στα 95% confidence intervals και εκφράζουν την αβεβαιότητα των εκτιμήσεων. Παρότι υπάρχει κάποια επικάλυψη μεταξύ των confidence intervals, η συνολική τάση δείχνει σταθερά καλύτερη απόδοση της ομάδας ad.
+
+Συνεπώς, η αποτελεσματικότητα της διαφημιστικής καμπάνιας φαίνεται να διατηρείται σε όλες τις ημέρες της εβδομάδας, με ορισμένες ημέρες να παρουσιάζουν ακόμη ισχυρότερο θετικό αποτέλεσμα.
+
+<br>
+
+```{r}
+# CI για τη διαφορά (lift)
+conf_int <- broom::tidy(test)
+lift_pct <- (conf_int$estimate1 - conf_int$estimate2) /
+             conf_int$estimate2 * 100
+
+cat(sprintf("Absolute lift: %.2f ποσοστ. μονάδες\n",
+            (conf_int$estimate1 - conf_int$estimate2) * 100))
+cat(sprintf("Relative lift: %+.1f%%\n", lift_pct))
+cat(sprintf("95%% CI for difference: [%.4f, %.4f]\n",
+            conf_int$conf.low, conf_int$conf.high))
+```
+Το absolute lift είναι περίπου 0.77 ποσοστιαίες μονάδες και το relative lift περίπου 30.1%. Το 95% confidence interval της διαφοράς είναι [-0.0094, -0.0060], γεγονός που δείχνει ότι η διαφορά μεταξύ των δύο ομάδων είναι στατιστικά σημαντική. Επιπλέον, το μέγεθος της διαφοράς (Absolute lift) υπερβαίνει το επιχειρηματικό κατώφλι d
+min=0.005, καθώς ακόμη και το όριο του confidence interval που βρίσκεται πλησιέστερα στο μηδέν έχει απόλυτη τιμή μεγαλύτερη από 0.005. Επομένως, η επίδραση είναι τόσο στατιστικά όσο και επιχειρηματικά σημαντική. Η περίπτωση που ισχύει είναι η A και η σύσταση είναι να επιλεγεί η ομάδα με το υψηλότερο conversion rate (ad), καθώς παρουσιάζει ουσιαστικά καλύτερη απόδοση από την ομάδα psa.
+
+
+Ποιο είναι το p-value του ελέγχου; Απορρίπτουμε την H₀ σε επίπεδο α = 0.05;
+
+Το p-value είναι 1.705 × 10⁻¹³.
+
+Απορρίπτουμε την H₀ σε επίπεδο α = 0.05;
+
+Ναι. Εφόσον:
+
+p=1.705×10
+−13
+<0.05
+
+απορρίπτουμε τη μηδενική υπόθεση.
+
+Συμπέρασμα: Υπάρχει στατιστικά σημαντική διαφορά στα conversion rates μεταξύ των ομάδων PSA και Ad. Η ομάδα Ad παρουσιάζει υψηλότερο conversion rate (2.55%) από την ομάδα PSA (1.79%).
+
+
+
+
+μπίπτει το χειρωνακτικό CI με αυτό του prop.test(); Αν όχι, γιατί;
+
+Το χειρωνακτικό 95% CI υπολογίστηκε με pooled standard error, ενώ το prop.test() χρησιμοποιεί score/Wilson προσέγγιση για τη διαφορά των proportions. Επομένως τα δύο διαστήματα δεν είναι ακριβώς ίδια αριθμητικά, αλλά οδηγούν στο ίδιο συμπέρασμα, αφού και τα δύο αποκλείουν το 0 και υποδεικνύουν στατιστικά σημαντική διαφορά μεταξύ control και treatment.
+
+
+Πόσα άτομα χρειαζόντουσαν για power 80%; Πόσα τρέξαμε; Τι συνεπάγεται αυτό;
+
+Από το power analysis:
+
+n=3204.715
+
+Άρα απαιτούνταν περίπου:
+
+3205 άτομα ανά ομάδα για power 80%.
+
+Στο πείραμα χρησιμοποιήθηκαν:
+
+8000 άτομα στο control
+8000 άτομα στο treatment
+
+δηλαδή συνολικά:
+
+16000 
+α
+ˊ
+τομα
+
+Το πραγματικό δείγμα είναι πολύ μεγαλύτερο από το ελάχιστο απαιτούμενο.
+
+Συμπέρασμα:
+
+Το πείραμα είχε επαρκή στατιστική ισχύ (power > 80%) για να ανιχνεύσει τη διαφορά 8% → 10%. Επομένως η πιθανότητα να μην εντοπιστεί μια πραγματική διαφορά (σφάλμα τύπου ΙΙ) είναι μικρή και τα αποτελέσματα θεωρούνται αξιόπιστα.
+
+
+
