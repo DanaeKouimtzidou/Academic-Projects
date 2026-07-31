@@ -1,0 +1,252 @@
+---
+title: "Εργασία 6"
+author: "Kouimtzidou Danae"
+date: "2026-04-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+<br>
+
+**Φόρτωση βιβλιοθηκών**
+```{r}
+library(caTools)
+library(ROCR)
+```
+<br>
+
+**Εισαγωγή του dataset**
+```{r}
+loan<-read.csv("loan_data.csv")
+```
+
+```{r}
+str(loan)
+```
+```{r}
+summary(loan)
+```
+<br>
+
+**Διαχωρισμός δεδομένων σε Training και Testing set**
+```{r}
+set.seed(949)
+
+split<-sample.split(loan$loan_status , SplitRatio = 0.65)
+
+train <- subset(loan, split == TRUE)
+test <- subset(loan, split == FALSE)
+```
+Σε αυτό το βήμα γίνεται ο διαχωρισμός του dataset σε δύο σύνολα δεδομένων. Το training set χρησιμοποιείται για την εκπαίδευση του μοντέλου, ενώ το testing set χρησιμοποιείται για την αξιολόγηση της απόδοσής του. Με τη χρήση της συνάρτησης sample.split() το 65% των δεδομένων επιλέγεται για το training set και το υπόλοιπο 35% για το testing set. Η εντολή set.seed() χρησιμοποιείται ώστε ο διαχωρισμός να είναι αναπαραγώγιμος.
+
+
+```{r}
+nrow(train)
+nrow(test)
+```
+Με τη χρήση της συνάρτησης nrow() υπολογίζεται ο αριθμός των παρατηρήσεων που περιλαμβάνονται στο training και στο testing set. Στην περίπτωση αυτή το training set περιέχει 29.250 παρατηρήσεις, ενώ το testing set περιέχει 15.750 παρατηρήσεις.
+
+<br>
+
+
+**Δημιουργία μοντέλου Logistic Regression**
+```{r}
+LoanLog <- glm(loan_status ~ person_age +
+               person_gender +
+               person_education +
+               person_income +
+               person_emp_exp +
+               person_home_ownership +
+               loan_amnt +
+               loan_intent +
+               loan_int_rate +
+               loan_percent_income +
+               cb_person_cred_hist_length +
+               credit_score +
+               previous_loan_defaults_on_file,
+               data = train,
+               family = binomial)
+
+```
+
+```{r}
+summary(LoanLog)
+```
+
+Το μοντέλο Logistic Regression δημιουργήθηκε χρησιμοποιώντας όλες τις ανεξάρτητες μεταβλητές. Από τα αποτελέσματα του summary() παρατηρούμε ότι αρκετές μεταβλητές είναι στατιστικά σημαντικές.
+
+Οι μεταβλητές με πολύ ισχυρή στατιστική σημαντικότητα (p < 0.001) είναι:
+
+person_home_ownershipOWN
+person_home_ownershipRENT
+loan_amnt
+loan_intentEDUCATION
+loan_intentMEDICAL
+loan_intentPERSONAL
+loan_intentVENTURE
+loan_int_rate
+loan_percent_income
+credit_score
+
+Επίσης σημαντικές στο επίπεδο 5% είναι οι μεταβλητές:
+
+person_age
+person_income
+person_emp_exp
+
+Τέλος οριακή στατιστική σημαντικότητα εμφανίζει η μεταβλητή person_educationHigh School (p < 0.1)
+
+Αντίθετα, μεταβλητές όπως person_gender, person_education και cb_person_cred_hist_length δεν εμφανίζουν στατιστικά σημαντική συσχέτιση με την εξαρτημένη μεταβλητή loan_status.
+
+<br>
+
+
+**Προβλέψεις στο test set**
+```{r}
+predictTest <- predict(LoanLog, type = "response", newdata = test)
+```
+
+
+```{r}
+head(predictTest)
+```
+
+Με τη χρήση της συνάρτησης predict() δημιουργήθηκαν προβλέψεις για το test set χρησιμοποιώντας το μοντέλο Logistic Regression που εκπαιδεύτηκε στο training set. Η εντολή επιστρέφει πιθανότητες μεταξύ 0 και 1, οι οποίες εκφράζουν την πιθανότητα η εξαρτημένη μεταβλητή loan_status να πάρει την τιμή 1 για κάθε παρατήρηση του test set.
+
+Για παράδειγμα, μια τιμή όπως 0.9939 σημαίνει ότι το μοντέλο εκτιμά περίπου 99,39% πιθανότητα η συγκεκριμένη παρατήρηση να ανήκει στην κατηγορία loan_status = 1. Αντίστοιχα, μια τιμή όπως 0.0977 δείχνει πολύ μικρή πιθανότητα (περίπου 9,77%) για loan_status = 1, άρα η παρατήρηση είναι πιο πιθανό να ανήκει στην κατηγορία loan_status = 0.
+
+<br>
+
+
+**Δημιουργία Confusion Matrix**
+```{r}
+cm <- table(test$loan_status, predictTest > 0.5)
+cm
+```
+True Negative (TN) = 11532: Το μοντέλο προέβλεψε ότι η κατηγορία είναι 0 (FALSE) και η πραγματική τιμή ήταν επίσης 0. Πρόκειται για σωστή πρόβλεψη αρνητικής περίπτωσης.
+False Positive (FP) = 718: Το μοντέλο προέβλεψε την κατηγορία 1 (TRUE), ενώ η πραγματική τιμή ήταν 0. Δηλαδή το μοντέλο θεώρησε ότι υπάρχει θετική περίπτωση ενώ στην πραγματικότητα δεν υπάρχει.
+False Negative (FN) = 932: Το μοντέλο προέβλεψε την κατηγορία 0 (FALSE), ενώ η πραγματική τιμή ήταν 1. Δηλαδή το μοντέλο δεν εντόπισε μια πραγματικά θετική περίπτωση.
+True Positive (TP) = 2568: Το μοντέλο προέβλεψε την κατηγορία 1 (TRUE) και η πραγματική τιμή ήταν επίσης 1. Πρόκειται για σωστή πρόβλεψη θετικής περίπτωσης.
+
+ΔΗΛΑΔΗ 
+
+TP (True Positives) = 2568: Το μοντέλο προέβλεψε ότι ο πελάτης θα παρουσιάσει πρόβλημα στην αποπληρωμή του δανείου (loan_status = 1) και η πραγματική τιμή ήταν επίσης 1. Πρόκειται για δανειολήπτες υψηλού κινδύνου που εντοπίστηκαν σωστά από το μοντέλο.
+
+TN (True Negatives) = 11532: Το μοντέλο προέβλεψε ότι ο πελάτης δεν θα παρουσιάσει πρόβλημα στην αποπληρωμή του δανείου (loan_status = 0) και η πραγματική τιμή ήταν επίσης 0. Πρόκειται για δανειολήπτες χαμηλού κινδύνου που αναγνωρίστηκαν σωστά από το μοντέλο.
+
+FP (False Positives) = 718: Το μοντέλο προέβλεψε ότι ο πελάτης θα παρουσιάσει πρόβλημα στην αποπληρωμή του δανείου (loan_status = 1), ενώ στην πραγματικότητα δεν παρουσίασε πρόβλημα (loan_status = 0). Πρόκειται για πελάτες που χαρακτηρίστηκαν λανθασμένα ως υψηλού κινδύνου.
+
+FN (False Negatives) = 932: Το μοντέλο προέβλεψε ότι ο πελάτης δεν θα παρουσιάσει πρόβλημα στην αποπληρωμή του δανείου (loan_status = 0), ενώ στην πραγματικότητα παρουσίασε πρόβλημα (loan_status = 1). Πρόκειται για πελάτες υψηλού κινδύνου που το μοντέλο δεν κατάφερε να εντοπίσει.
+<br>
+
+
+**Υπολογισμός μετρικών αξιολόγησης**
+```{r}
+TN <- cm[1,1]
+FP <- cm[1,2]
+FN <- cm[2,1]
+TP <- cm[2,2]
+
+accuracy <- (TP + TN) / sum(cm)
+
+sensitivity <- TP / (TP + FN)
+
+specificity <- TN / (TN + FP)
+
+baseline <- max(table(test$loan_status)) / length(test$loan_status)
+
+accuracy
+sensitivity
+specificity
+baseline
+```
+
+Η accuracy του μοντέλου είναι 89.52%, γεγονός που σημαίνει ότι περίπου το 89.5% των παρατηρήσεων ταξινομούνται σωστά από το μοντέλο.
+
+Η sensitivity είναι 73.37%, πράγμα που δείχνει ότι το μοντέλο αναγνωρίζει σωστά περίπου το 73% των θετικών περιπτώσεων της μεταβλητής loan_status.
+
+Η specificity είναι 94.14%, γεγονός που σημαίνει ότι το μοντέλο έχει πολύ υψηλή ικανότητα να εντοπίζει σωστά τις αρνητικές περιπτώσεις.
+
+Η baseline accuracy είναι 77.78%, η οποία αντιστοιχεί στην ακρίβεια που θα είχαμε αν προβλέπαμε πάντα την πιο συχνή κατηγορία της εξαρτημένης μεταβλητής.
+
+Παρατηρούμε ότι η ακρίβεια του μοντέλου Logistic Regression (89.52%) είναι σημαντικά μεγαλύτερη από την baseline accuracy (77.78%), γεγονός που δείχνει ότι το μοντέλο έχει καλή προγνωστική ικανότητα και αποδίδει καλύτερα από μια απλή πρόβλεψη της πιο συχνής κατηγορίας. Επιπλέον, το μοντέλο παρουσιάζει ιδιαίτερα υψηλή specificity, ενώ η sensitivity είναι χαμηλότερη αλλά παραμένει σε ικανοποιητικό επίπεδο.
+
+<br>
+
+
+**Δημιουργία νέου Logistic Regression μοντέλου**
+
+```{r}
+train2 <- na.omit(train)
+test2 <- na.omit(test)
+
+nrow(train2)
+nrow(test2)
+```
+Αρχικά δημιουργήθηκαν δύο νέα σύνολα δεδομένων, train2 και test2, χρησιμοποιώντας τη συνάρτηση na.omit(). Η συνάρτηση αυτή αφαιρεί όλες τις παρατηρήσεις που περιέχουν ελλιπείς τιμές (NA), ώστε το μοντέλο να εκπαιδεύεται και να αξιολογείται μόνο με πλήρη δεδομένα.
+
+Στη συνέχεια υπολογίστηκε το πλήθος των παρατηρήσεων σε κάθε νέο σύνολο δεδομένων με τη χρήση της εντολής nrow(). Τα αποτελέσματα έδειξαν ότι το train2 περιέχει 29.250 καταχωρήσεις, ενώ το test2 περιέχει 15.750 καταχωρήσεις.
+
+Τα νέα αυτά σύνολα δεδομένων χρησιμοποιούνται για την εκπαίδευση και την αξιολόγηση του μοντέλου χωρίς την παρουσία ελλιπών τιμών, γεγονός που μπορεί να βελτιώσει την αξιοπιστία των αποτελεσμάτων.
+
+
+```{r}
+LoanLog2 <- glm(loan_status ~ person_age +
+               person_gender +
+               person_education +
+               person_income +
+               person_emp_exp +
+               person_home_ownership +
+               loan_amnt +
+               loan_intent +
+               loan_int_rate +
+               loan_percent_income +
+               cb_person_cred_hist_length +
+               credit_score +
+               previous_loan_defaults_on_file,
+               data = train2,
+               family = binomial)
+
+summary(LoanLog2)
+```
+<br>
+
+
+**Προβλέψεις στο νέο test set**
+
+```{r}
+predictTest2 <- predict(LoanLog2, type = "response", newdata = test2)
+```
+<br>
+
+
+**Δημιουργία αντικειμένου ROCR**
+
+```{r}
+ROCRpred <- prediction(predictTest2, test2$loan_status)
+```
+<br>
+
+
+**Δημιουργία ROC curve με color-coding**
+
+```{r}
+ROCRperf <- performance(ROCRpred, "tpr", "fpr")
+
+plot(ROCRperf, colorize = TRUE)
+```
+<br>
+
+**Υπολογισμός AUC**
+
+```{r}
+AUC <- performance(ROCRpred, "auc")
+AUC@y.values[[1]]
+```
+
+Η καμπύλη ROC παρουσιάζει τη σχέση μεταξύ του True Positive Rate (Sensitivity) και του False Positive Rate για διαφορετικές τιμές κατωφλίου. Η καμπύλη βρίσκεται κοντά στο πάνω αριστερό μέρος του διαγράμματος, γεγονός που υποδηλώνει καλή απόδοση του μοντέλου.
+
+Η τιμή του AUC είναι 0.953, γεγονός που δείχνει ότι το μοντέλο Logistic Regression έχει πολύ υψηλή ικανότητα να διαχωρίζει σωστά τις δύο κατηγορίες της μεταβλητής loan_status. Όσο πιο κοντά είναι η τιμή του AUC στο 1, τόσο καλύτερη είναι η προγνωστική ικανότητα του μοντέλου.
+
