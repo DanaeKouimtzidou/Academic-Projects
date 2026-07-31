@@ -1,0 +1,556 @@
+---
+title: "Ergasia 9"
+author: "Κουιμτζίδου Δανάη"
+date: "2026-05-08"
+output: html_document
+---
+
+# ============================================================
+#  LAB 010 — Random Forests & Gradient Boosting
+#  Dataset: Breast Cancer (Wisconsin)
+#  Στόχος: Πρόβλεψη κακοήθειας από κυτταρολογικά χαρακτηριστικά
+# ============================================================
+
+# --- Φόρτωση πακέτων ---
+```{r}
+library(tidyverse)
+library(mlbench)
+library(randomForest)
+library(xgboost)
+library(caret)
+library(pROC)
+```
+
+
+
+
+
+# --- Φόρτωση δεδομένων ---
+```{r}
+data("BreastCancer", package = "mlbench")
+bc <- BreastCancer
+View(bc)
+str(bc)
+```
+
+
+# Καθαρισμός: αφαίρεση ID, χειρισμός missing, μετατροπή σε numeric
+```{r}
+bc$Id <- NULL
+bc <- na.omit(bc)
+bc[, 1:9] <- lapply(bc[, 1:9], function(x) as.numeric(as.character(x)))
+
+str(bc)
+table(bc$Class)
+```
+
+```{r}
+ggplot(bc, aes(x = Cell.size, fill = Class)) +
+  geom_density(alpha = 0.6) +
+  labs(
+    title = "Κατανομή Cell Size ανά κατηγορία όγκου",
+    x = "Cell Size",
+    y = "Density"
+  ) +
+  theme_minimal()
+```
+
+Το density plot της μεταβλητής Cell.size δείχνει σαφή διαφοροποίηση μεταξύ καλοήθων και κακοήθων όγκων. Οι καλοήθεις περιπτώσεις συγκεντρώνονται σε χαμηλές τιμές της μεταβλητής, ενώ οι κακοήθεις παρουσιάζουν υψηλότερες τιμές, γεγονός που υποδηλώνει ότι η Cell.size αποτελεί σημαντικό προγνωστικό χαρακτηριστικό για την ταξινόμηση των όγκων.
+
+# ============================================================
+#  ΜΕΡΟΣ Α — BASELINE με Random Forest
+# ============================================================
+
+# Stratified train/test split (70/30)
+
+```{r}
+set.seed(42)
+train_idx <- createDataPartition(bc$Class, p = 0.7, list = FALSE)
+
+train <- bc[train_idx, ]
+test  <- bc[-train_idx, ]
+
+prop.table(table(train$Class)) %>% round(3)
+prop.table(table(test$Class))  %>% round(3)
+```
+<br>
+
+# Random Forest με ntree=500, importance=TRUE
+
+```{r}
+rf_model <- randomForest(
+  Class ~ Cl.thickness +
+    Cell.size +
+    Cell.shape +
+    Marg.adhesion +
+    Epith.c.size +
+    Bare.nuclei +
+    Bl.cromatin +
+    Normal.nucleoli +
+    Mitoses,
+
+  data = train,
+  ntree = 500,
+  importance = TRUE
+)
+print(rf_model)
+```
+
+1. mtry = 3
+Επειδή υπάρχουν 9 features, το randomForest επέλεξε default: 3 μεταβλητές ανά split.
+
+
+2. OOB error ≈ 3.34%
+Αυτό σημαίνει ότι το μοντέλο κάνει λάθος περίπου στο 3.34% των περιπτώσεων χωρίς να χρησιμοποιήσει το test set.
+
+Άρα το εκτιμώμενο accuracy είναι περίπου:
+Accuracy ≈ 1 − 0.0334 = 0.9666, δηλαδή περίπου 96.66%, που θεωρείται εξαιρετική επίδοση.
+
+
+3. Class error ασύμμετρο:
+
+Για την κατηγορία benign:
+Class Error benign = 0.03215 ≈ 3.2%, δηλαδή το μοντέλο αναγνωρίζει σωστά περίπου το 96.8% των καλοήθη περιπτώσεων.
+
+Για την κατηγορία malignant:
+Class Error malignant =  0.03571 ≈ 3.5%, δηλαδή αναγνωρίζει σωστά περίπου το 96.5% των κακοήθων περιπτώσεων.
+
+Το μοντέλο παρουσιάζει πολύ καλή ισορροπία μεταξύ των δύο κατηγοριών και δεν φαίνεται να έχει σοβαρό imbalance problem.
+
+Παρότι κάνει λίγο περισσότερα λάθη στα κακοήθη περιστατικά, η απόδοση παραμένει εξαιρετικά υψηλή για ιατρικό classification πρόβλημα.
+
+<br>
+
+```{r}
+plot(rf_model, main = "OOB Error vs Number of Trees")
+legend("topright", colnames(rf_model$err.rate), col = 1:3, lty = 1:3)
+```
+
+Τι δείχνουν οι γραμμές
+Μαύρη γραμμή (OOB): το συνολικό ποσοστό σφάλματος του μοντέλου.
+Κόκκινη γραμμή (benign): σφάλμα ταξινόμησης για την κλάση benign.
+Πράσινη γραμμή (malignant): σφάλμα ταξινόμησης για την κλάση malignant.
+Τι παρατηρούμε
+Στα πρώτα δέντρα (1–30 περίπου) το σφάλμα είναι σχετικά υψηλό.
+Όσο αυξάνονται τα δέντρα, το OOB error μειώνεται γρήγορα.
+Μετά από περίπου 150–200 δέντρα η καμπύλη σταθεροποιείται.
+Στα 500 δέντρα το συνολικό OOB error είναι περίπου 3.3%–3.5%.
+Ερμηνεία
+Το μοντέλο ταξινομεί σωστά περίπου το 96.5%–97% των περιπτώσεων.
+Η κλάση benign έχει λίγο μικρότερο σφάλμα από την malignant.
+Η πράσινη γραμμή είναι συνήθως υψηλότερη, άρα οι κακοήθεις όγκοι είναι ελαφρώς πιο δύσκολο να ταξινομηθούν.
+
+
+# Accuracy, Sensitivity, AUC στο test set
+
+```{r}
+
+# Predictions
+rf_pred <- predict(rf_model, test)
+
+# Probabilities για ROC
+rf_prob <- predict(rf_model, test, type = "prob")[,2]
+
+# Confusion Matrix
+rf_cm <- confusionMatrix(
+  rf_pred,
+  test$Class,
+  positive = "malignant"
+)
+
+rf_cm
+
+# Accuracy
+rf_accuracy <- rf_cm$overall["Accuracy"]
+
+# Sensitivity
+rf_sensitivity <- rf_cm$byClass["Sensitivity"]
+
+# Specificity
+rf_specificity <- rf_cm$byClass["Specificity"]
+
+# ROC / AUC
+rf_roc <- roc(
+  response = test$Class,
+  predictor = rf_prob,
+  levels = c("benign", "malignant")
+)
+
+rf_auc <- auc(rf_roc)
+
+rf_auc
+
+```
+
+**Ερμηνεία**
+
+131 benign προβλέφθηκαν σωστά ως benign
+69 malignant προβλέφθηκαν σωστά ως malignant
+2 benign ταξινομήθηκαν λάθος ως malignant
+2 malignant ταξινομήθηκαν λάθος ως benign
+
+Άρα συνολικά μόνο: 4 λάθη στο test set
+
+Accuracy = 0.9804 ≈ 98.04%
+
+Το μοντέλο προβλέπει σωστά περίπου το 98% των περιπτώσεων. Πολύ υψηλή επίδοση.
+
+Sensitivity = 0.9718 ≈ 97.18%
+Δείχνει πόσο καλά εντοπίζει τα κακοήθη περιστατικά. Άρα βρίσκει σωστά περίπου το 97.18% των κακοήθων όγκων.
+
+Specificity = 0.9850 ≈ 98.5%
+Δείχνει πόσο καλά αναγνωρίζει τα καλοήθη περιστατικά. Άρα προβλέπει σωστά περίπου το 98.5% των καλοήθων όγκων.
+AUC
+
+AUC=0.9986
+Το AUC είναι σχεδόν 1. Αυτό σημαίνει εξαιρετικός διαχωρισμός benign με malignant. Το μοντέλο ξεχωρίζει σχεδόν τέλεια τις δύο κατηγορίες
+
+Άρα πολύ ισχυρό classification model.
+
+<br>
+
+# Variable Importance plot
+
+```{r}
+varImpPlot(rf_model, main = "Variable Importance — Random Forest")
+importance(rf_model)
+```
+Από το Variable Importance plot, τα top 3 features είναι:
+
+1. Cell.size
+2. Cell.shape
+3. Bare.nuclei
+
+<br>
+
+# ============================================================
+#  ΜΕΡΟΣ Β — BOOSTING & TUNING
+# ============================================================
+
+# Προετοιμασία των δεδομένων για XGBoost
+
+```{r}
+# Προετοιμασία predictors
+train_x <- as.matrix(train[, -10])  # χωρίς τη στήλη Class
+test_x  <- as.matrix(test[, -10])
+
+# Μετατροπή target σε binary
+train_y <- ifelse(train$Class == "malignant", 1, 0)
+test_y  <- ifelse(test$Class == "malignant", 1, 0)
+
+# Δημιουργία DMatrix
+dtrain <- xgb.DMatrix(
+  data = train_x,
+  label = train_y
+)
+
+dtest <- xgb.DMatrix(
+  data = test_x,
+  label = test_y
+)
+```
+
+<br>
+
+# Εκπαίδευση  XGBoost μοντέλο με early stopping
+#   Παράμετροι: max_depth=4, eta=0.1, nrounds=500, early_stopping_rounds=20
+```{r}
+set.seed(42)
+
+params <- list(
+  objective   = "binary:logistic",
+  eval_metric = "auc",
+  max_depth   = 4,
+  eta         = 0.1,       
+  subsample   = 0.8,
+  colsample_bytree = 0.8
+)
+
+xgb_model <- xgb.train(
+  params              = params,
+  data                = dtrain,
+  nrounds             = 500,
+  evals              = list(train = dtrain, test = dtest),
+  early_stopping_rounds = 20,
+  print_every_n       = 25,
+  verbose             = 1
+)
+```
+
+Το XGBoost εκπαιδεύτηκε με early stopping ώστε να αποφεύγεται το overfitting.
+
+Η διαδικασία early stopping επέλεξε ως βέλτιστο μοντέλο εκείνο του 95ου boosting iteration, με test AUC = 0.999923	
+
+Η εκπαίδευση τερματίστηκε όταν δεν παρατηρήθηκε περαιτέρω βελτίωση του AUC για 20 συνεχόμενα iterations.
+Το μοντέλο πέτυχε πολύ υψηλό test AUC (~0.999), υποδεικνύοντας εξαιρετική ικανότητα διάκρισης μεταξύ benign και malignant περιπτώσεων.
+
+<br>
+
+```{r}
+# Predictions
+xgb_prob <- predict(xgb_model, test_x)
+
+# Convert probabilities -> class
+xgb_pred <- ifelse(xgb_prob > 0.5,
+                   "malignant",
+                   "benign")
+
+xgb_pred <- factor(
+  xgb_pred,
+  levels = c("benign", "malignant")
+)
+
+# Confusion Matrix
+xgb_cm <- confusionMatrix(
+  xgb_pred,
+  test$Class,
+  positive = "malignant"
+)
+
+xgb_cm
+
+# Metrics
+xgb_accuracy <- xgb_cm$overall["Accuracy"]
+xgb_sensitivity <- xgb_cm$byClass["Sensitivity"]
+xgb_specificity <- xgb_cm$byClass["Specificity"]
+
+# ROC
+xgb_roc <- roc(
+  response = test$Class,
+  predictor = xgb_prob,
+  levels = c("benign", "malignant")
+)
+
+xgb_auc <- auc(xgb_roc)
+
+xgb_auc
+```
+**Ερμηνεία**
+
+132 benign προβλέφθηκαν σωστά
+65 malignant προβλέφθηκαν σωστά
+1 benign ταξινομήθηκε λάθος ως malignant
+6 malignant ταξινομήθηκαν λάθος ως benign
+
+Συνολικά: 7 λάθη στο test set
+
+Accuracy = 0.9755 ≈ 97.55%
+Το μοντέλο προβλέπει σωστά περίπου το 96.6% των περιπτώσεων. Πολύ υψηλή επίδοση.
+
+Sensitivity = 0.9155 ≈ 91.55%
+Δείχνει πόσο καλά εντοπίζει τα malignant περιστατικά. Άρα αναγνωρίζει σωστά περίπου το 91.6% των κακοήθων όγκων.
+
+Specificity=0.9925≈99.25%
+Δείχνει πόσο καλά αναγνωρίζει τα benign περιστατικά. Άρα ταξινομεί σωστά περίπου το 99.25% των benign περιπτώσεων.
+
+AUC=0.9968
+Το AUC είναι σχεδόν 1, που σημαίνει εξαιρετικός διαχωρισμός μεταξύ benign και malignant.
+
+<br>
+
+```{r}
+imp_xgb <- xgb.importance(model = xgb_model)
+print(imp_xgb)
+xgb.plot.importance(imp_xgb, top_n = 8, 
+                    main = "Feature Importance — XGBoost")
+```
+
+Από το Variable Importance plot, τα top 3 features είναι:
+
+1. Cell.size
+2. Cell.shape
+3. Bare.nuclei
+
+<br>
+
+# Σύγκριση XGBoost vs Random Forest σε ένα πίνακα
+#   Στήλες: Accuracy, Sensitivity, Specificity, AUC
+
+```{r}
+# =========================
+# RF metrics
+# =========================
+
+rf_accuracy <- rf_cm$overall["Accuracy"]
+
+rf_sensitivity <- rf_cm$byClass["Sensitivity"]
+
+rf_specificity <- rf_cm$byClass["Specificity"]
+
+rf_auc <- auc(rf_roc)
+
+# =========================
+# XGBoost metrics
+# =========================
+
+xgb_accuracy <- xgb_cm$overall["Accuracy"]
+
+xgb_sensitivity <- xgb_cm$byClass["Sensitivity"]
+
+xgb_specificity <- xgb_cm$byClass["Specificity"]
+
+xgb_auc <- auc(xgb_roc)
+
+# =========================
+# Comparison Table
+# =========================
+
+comparison_table <- data.frame(
+
+  Model = c(
+    "Random Forest",
+    "XGBoost"
+  ),
+
+  Accuracy = c(
+    rf_accuracy,
+    xgb_accuracy
+  ),
+
+  Sensitivity = c(
+    rf_sensitivity,
+    xgb_sensitivity
+  ),
+
+  Specificity = c(
+    rf_specificity,
+    xgb_specificity
+  ),
+
+  AUC = c(
+    rf_auc,
+    xgb_auc
+  )
+)
+
+comparison_table
+```
+
+<br>
+
+# ROC plot με 2 καμπύλες
+
+```{r}
+library(pROC)
+
+roc_rf  <- roc(test$Class, rf_prob,  levels = c("benign", "malignant"))
+roc_xgb <- roc(test$Class, xgb_prob, levels = c("benign", "malignant"))
+
+
+plot(roc_rf,  col = "forestgreen", lwd = 2, main = "ROC Curves Comparison")
+lines(roc_xgb, col = "steelblue",   lwd = 2)
+legend(
+  "bottomright",
+  legend = c(
+    paste0("RF (AUC = ", round(rf_auc, 3), ")"),
+    paste0("XGB (AUC = ", round(xgb_auc, 3), ")")
+  ),
+  col = c("forestgreen", "steelblue"),
+  lwd = 2
+)
+```
+
+Το διάγραμμα ROC δείχνει ότι και τα δύο μοντέλα παρουσιάζουν εξαιρετική διακριτική ικανότητα, καθώς οι καμπύλες τους βρίσκονται πολύ κοντά στην ιδανική περιοχή (πάνω αριστερή γωνία). Οι τιμές AUC είναι περίπου 0.998 και για τα δύο μοντέλα, γεγονός που υποδηλώνει σχεδόν τέλειο διαχωρισμό μεταξύ καλοήθων και κακοήθων περιπτώσεων. Το Random Forest εμφανίζει ελαφρώς υψηλότερο AUC και καλύτερη συνολική απόδοση, αν και η διαφορά από το XGBoost είναι πολύ μικρή.
+
+<br>
+
+**Μέρος Α**
+
+<br>
+
+**1. Ποιο Accuracy πήρατε;**
+
+Το Random Forest πέτυχε Accuracy περίπου: Accuracy ≈ 98.04%
+
+ενώ το XGBoost πέτυχε περίπου: Accuracy ≈ 97.55%
+
+Άρα και τα δύο μοντέλα είχαν εξαιρετική απόδοση.
+
+<br>
+
+**2. Ποια ήταν τα top-3 features σας;**
+
+Τα σημαντικότερα features από το Variable Importance Plot ήταν:
+
+Cell.size
+Cell.shape
+Bare.nuclei
+
+Αυτά συνέβαλαν περισσότερο στη διάκριση μεταξύ benign και malignant όγκων.
+
+<br>
+
+**3. Είναι 97% accuracy «αρκετό» σε ιατρικό context;**
+
+Το 97% accuracy θεωρείται πολύ υψηλό ποσοστό και γενικά εξαιρετικό αποτέλεσμα.
+
+Ωστόσο, σε ιατρικό context δεν αρκεί μόνο το accuracy.
+Πολύ σημαντικά είναι επίσης: το Sensitivity, τα false negatives, διότι ένα false negative σημαίνει ότι ένας κακοήθης όγκος προβλέπεται λανθασμένα ως καλοήθης.
+
+Στο δικό μας μοντέλο τα false negatives ήταν πολύ λίγα, επομένως η απόδοση θεωρείται ιδιαίτερα καλή για ιαρικό πρόβλημα.
+
+<br>
+
+**Μέρος Β**
+
+<br>
+
+**1. Ποιο μοντέλο νίκησε; Με πόση διαφορά;**
+
+Το Random Forest είχε συνολικά καλύτερη απόδοση.
+
+Συγκεκριμένα:
+
+καλύτερο Accuracy
+καλύτερο Sensitivity
+ελαφρώς καλύτερο AUC
+
+Η διαφορά στο Accuracy ήταν περίπου: 98.04% − 97.55% ≈ 1.47%, δηλαδή περίπου 1.5%.
+
+<br>
+
+**2. Σας εξέπληξε κάτι στα αποτελέσματα;**
+
+Ναι. Παρότι το XGBoost θεωρείται συχνά πιο ισχυρό boosting μοντέλο, στο συγκεκριμένο dataset το Random Forest απέδωσε ελαφρώς καλύτερα.
+
+Επίσης, και τα δύο μοντέλα πέτυχαν εξαιρετικά υψηλό AUC (~0.997–0.999), κάτι που δείχνει ότι το dataset είναι αρκετά “καθαρό” και τα classes διαχωρίζονται σχετικά εύκολα.
+
+
+1. XGBoost
+
+Πλεονεκτήματα
+
+Πολύ υψηλή ακρίβεια.
+Εξαιρετική συμπεριφορά σε tabular data (πίνακες δεδομένων).
+Πολύ ώριμο και δοκιμασμένο.
+Συχνά κερδίζει σε διαγωνισμούς και εφαρμογές.
+
+Μειονεκτήματα
+
+Περισσότερες παράμετροι για ρύθμιση.
+Συνήθως πιο αργό από το LightGBM.
+2. LightGBM
+
+Πλεονεκτήματα
+
+Πολύ γρήγορο.
+Κλιμακώνεται καλύτερα σε εκατομμύρια γραμμές.
+Συχνά έχει απόδοση ίδια ή και καλύτερη από το XGBoost.
+
+Μειονεκτήματα
+
+Μπορεί να κάνει πιο εύκολα overfitting σε μικρά datasets.
+Θέλει προσοχή στο tuning.
+3. Random Forest
+
+Πλεονεκτήματα
+
+Απλό και σταθερό.
+Λιγότερο ευαίσθητο στις παραμέτρους.
+Δύσκολα κάνει σοβαρό overfitting.
+
+Μειονεκτήματα
+
+Συνήθως χαμηλότερη ακρίβεια από XGBoost/LightGBM.
+Δεν εκμεταλλεύεται τα λάθη προηγούμενων δέντρων όπως το boosting.
+
