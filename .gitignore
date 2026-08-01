@@ -1,0 +1,9 @@
+# ==========================
+# Eclipse
+# ==========================
+.settings/
+.metadata/
+
+# Compiled classes
+bin/
+out/
